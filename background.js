@@ -3,7 +3,8 @@
 const HOST_NAME = 'com.animeautoplay.host';
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type !== 'AUTO_CLICK') return;
+  // Aceptar AUTO_CLICK, PRESS_F, CLICK_CENTER y cualquier mensaje para el host
+  if (!msg.type || !['AUTO_CLICK', 'PRESS_F', 'CLICK_CENTER'].includes(msg.type)) return;
 
   chrome.runtime.sendNativeMessage(HOST_NAME, msg, (response) => {
     if (chrome.runtime.lastError) {

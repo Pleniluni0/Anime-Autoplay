@@ -68,7 +68,11 @@
         audioStates.push({ v, muted: v.muted, volume: v.volume });
       });
 
-      // Simular tecla F
+      // Intento 1: APIs nativas de reproductores (JWPlayer, VideoJS)
+      // No requieren user gesture → más fiable que KeyboardEvent sintético
+      try { enterFullscreenNow(); } catch (_) {}
+
+      // Intento 2: KeyboardEvent sintético (fallback, raramente funciona en navegadores modernos)
       ['keydown', 'keypress', 'keyup'].forEach(type => {
         document.dispatchEvent(new KeyboardEvent(type, {
           key: 'f', code: 'KeyF', keyCode: 70, which: 70,
@@ -93,6 +97,8 @@
   });
   // Reintenta hasta que el video aparezca y empiece a reproducirse, o hasta timeout
   let playPersistentActive = false;
+  let playPersistentInterval = null;
+  let playPersistentObserver = null;
   function playPersistent() {
     if (playPersistentActive) return;
     playPersistentActive = true;
@@ -100,18 +106,29 @@
     const start = Date.now();
     const MAX_MS = 15000;
 
+    // Si el usuario pausa manualmente, abortar todos los reintentos
+    function onUserPause(e) {
+      const vid = e.target;
+      if (vid._aapOurPause) return; // pausa causada por nuestro código (mutePlay, seek, etc.)
+      if (!vid.paused) return;      // no es un pause real
+      DBG('playPersistent: usuario pausó manualmente, abortando reintentos');
+      cleanup();
+    }
+    document.addEventListener('pause', onUserPause, true);
+
     function attempt() {
       const vid = document.querySelector('video');
       const dmIframe = document.querySelector('iframe[src*="dailymotion.com"]');
       if (!vid && dmIframe) DBG('playPersistent: sin <video> pero hay iframe Dailymotion');
       if (vid) DBG('playPersistent: <video> readyState=', vid.readyState, 'paused=', vid.paused, 'muted=', vid.muted);
-      if (vid && !vid.paused && !vid.ended) { DBG('playPersistent: ya reproduciéndose'); return true; }
+      if (vid && !vid.paused && !vid.ended) { DBG('playPersistent: ya reproduciéndose'); cleanup(); return true; }
+      if (vid && vid._aapUserPaused) { DBG('playPersistent: video pausado por usuario, abortando'); cleanup(); return true; }
       if (vid) {
         if (vid.readyState >= 2) {
           mutePlay(vid);
           tryPlay();
         } else {
-          vid.addEventListener('canplay', () => { if (vid.paused) { mutePlay(vid); tryPlay(); } }, { once: true });
+          vid.addEventListener('canplay', () => { if (vid.paused && !vid._aapUserPaused) { mutePlay(vid); tryPlay(); } }, { once: true });
         }
       }
       clickUnmuteButton();
@@ -137,23 +154,31 @@
       return false;
     }
 
+    function cleanup() {
+      clearInterval(playPersistentInterval);
+      playPersistentInterval = null;
+      if (playPersistentObserver) { playPersistentObserver.disconnect(); playPersistentObserver = null; }
+      document.removeEventListener('pause', onUserPause, true);
+      playPersistentActive = false;
+    }
+
     attempt();
-    const interval = setInterval(() => {
+    playPersistentInterval = setInterval(() => {
       if (attempt() || Date.now() - start > MAX_MS) {
-        clearInterval(interval);
-        playPersistentActive = false;
+        cleanup();
       }
     }, 400);
 
     // También observar nuevos elementos <video> añadidos al DOM (Dailymotion lo crea dinámicamente)
-    const mo = new MutationObserver(() => { attempt(); });
-    mo.observe(document.documentElement, { childList: true, subtree: true });
-    setTimeout(() => mo.disconnect(), MAX_MS);
+    playPersistentObserver = new MutationObserver(() => { attempt(); });
+    playPersistentObserver.observe(document.documentElement, { childList: true, subtree: true });
+    setTimeout(() => { if (playPersistentObserver) { playPersistentObserver.disconnect(); playPersistentObserver = null; } }, MAX_MS);
   }
 
   function mutePlay(vid) {
     if (vid._aapMpInFlight) return Promise.resolve();
     vid._aapMpInFlight = true;
+    vid._aapOurPause = true; // evitar que el pause del mute/unmute se interprete como pausa del usuario
     if (vid._aapOrigMuted === undefined) vid._aapOrigMuted = vid.muted;
     const wasMuted = vid._aapOrigMuted;
     vid.muted = true;
@@ -161,9 +186,10 @@
       .then(() => { setTimeout(() => {
         vid.muted = wasMuted;
         if (vid.volume === 0) vid.volume = 1;
+        delete vid._aapOurPause;
         vid._aapMpInFlight = false;
       }, 300); })
-      .catch(() => { vid.muted = wasMuted; vid._aapMpInFlight = false; });
+      .catch(() => { vid.muted = wasMuted; delete vid._aapOurPause; vid._aapMpInFlight = false; });
   }
 
   function ask() {
@@ -444,12 +470,15 @@
   function doIntroSkip(video) {
     introSkipDone = true;
     hideSkipBtn();
+    video._aapOurPause = true; // el seek va a disparar pause, que no se interprete como usuario
     const wasPlaying = !video.paused;
     video.currentTime = S.introTo;
     if (wasPlaying) {
-      const resume = () => { video.play().catch(() => {}); video.removeEventListener('seeked', resume); };
+      const resume = () => { video.play().catch(() => {}); video.removeEventListener('seeked', resume); delete video._aapOurPause; };
       video.addEventListener('seeked', resume);
-      setTimeout(() => { if (video.paused) video.play().catch(() => {}); }, 250);
+      setTimeout(() => { if (video.paused) { video.play().catch(() => {}); delete video._aapOurPause; } }, 250);
+    } else {
+      delete video._aapOurPause;
     }
   }
 
@@ -459,6 +488,16 @@
   function attach(v) {
     if (v._aap) return;
     v._aap = true;
+
+    // Detectar pausa manual del usuario para abortar auto-reproducción
+    v.addEventListener('pause', () => {
+      if (v._aapOurPause) return; // pausa causada por nuestro código (mutePlay, seek, tryPlay)
+      v._aapUserPaused = true;
+      DBG('attach: usuario pausó manualmente');
+    });
+    v.addEventListener('play', () => {
+      delete v._aapUserPaused;
+    });
 
     v.addEventListener('loadedmetadata', () => {
       earlyFired    = false;
@@ -537,6 +576,9 @@
   function tryPlay() {
     const vid = document.querySelector('video');
     if (!vid || vid.ended || !vid.paused) return;
+    if (vid._aapUserPaused) return; // el usuario pausó manualmente, no forzar
+
+    vid._aapOurPause = true; // evitar que nuestras operaciones se interpreten como pausa del usuario
 
     // 1. Click en el centro del player — donde está el botón grande de play de JWPlayer
     const playerEl = document.querySelector('.jw-media, .jw-wrapper, video');
@@ -561,7 +603,7 @@
       '.plyr__control--overlaid, button[data-plyr="play"], ' +
       '.vp-play-button, .play-button, .pjs-play-button'
     );
-    if (playBtn) { playBtn.click(); return; }
+    if (playBtn) { playBtn.click(); delete vid._aapOurPause; return; }
 
     // 3. API JWPlayer
     try {
@@ -571,7 +613,7 @@
             const jw = window.jwplayer(el.id);
             if (jw && typeof jw.getState === 'function') {
               const st = jw.getState();
-              if (st === 'paused' || st === 'idle') { jw.play(); return; }
+              if (st === 'paused' || st === 'idle') { jw.play(); delete vid._aapOurPause; return; }
             }
           } catch (_) {}
         }
@@ -584,13 +626,15 @@
         const vjsEl = document.querySelector('.video-js[id], [data-vjs-player][id]');
         if (vjsEl) {
           const vj = window.videojs.getPlayer(vjsEl.id);
-          if (vj && vj.paused()) { vj.play(); return; }
+          if (vj && vj.paused()) { vj.play(); delete vid._aapOurPause; return; }
         }
       }
     } catch (_) {}
 
-    // 5. Fallback nativo
+    // 5. Fallback nativo (mutePlay ya marca _aapOurPause)
     mutePlay(vid);
+    // mutePlay limpia _aapOurPause internamente; si no llegó a ejecutarse, limpiar aquí
+    setTimeout(() => { delete vid._aapOurPause; }, 500);
   }
 
   // Cuando se envía PRESS_F, hacer polling hasta detectar fullscreen y luego play

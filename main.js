@@ -281,12 +281,15 @@
   }
   function doMainIntroSkip(video) {
     hideMainSkipBtn();
+    video._aapOurPause = true; // el seek va a disparar pause, que no se interprete como usuario
     const wasPlaying = !video.paused;
     video.currentTime = settings.introTo;
     if (wasPlaying) {
-      const resume = () => { video.play().catch(()=>{}); video.removeEventListener('seeked', resume); };
+      const resume = () => { video.play().catch(()=>{}); video.removeEventListener('seeked', resume); delete video._aapOurPause; };
       video.addEventListener('seeked', resume);
-      setTimeout(() => { if (video.paused) video.play().catch(()=>{}); }, 250);
+      setTimeout(() => { if (video.paused) { video.play().catch(()=>{}); delete video._aapOurPause; } }, 250);
+    } else {
+      delete video._aapOurPause;
     }
   }
 
@@ -299,6 +302,17 @@
     if (attachedVideos.has(v)) return;
     attachedVideos.add(v);
     DBG('attachVideo: enganchado a <video>', v.src ? '(con src)' : '(sin src aún)');
+
+    // Detectar pausa manual del usuario para abortar auto-reproducción
+    v.addEventListener('pause', () => {
+      if (v._aapOurPause) return;
+      v._aapUserPaused = true;
+      DBG('attachVideo: usuario pausó manualmente');
+    });
+    v.addEventListener('play', () => {
+      delete v._aapUserPaused;
+    });
+
     v.addEventListener('loadedmetadata', () => { DBG('video loadedmetadata, duration=', v.duration); earlyFired=false; introSkipDone=false; hideMainSkipBtn(); hideMainCountdown(); });
     v.addEventListener('ended', () => { DBG('video ended → countdown'); hideMainSkipBtn(); if (settings.autoplay) setTimeout(startMainCountdown, 500); });
     v.addEventListener('timeupdate', () => {
@@ -537,23 +551,45 @@
       try { void target.contentDocument; isSameOrigin = true; } catch (_) {}
 
       if (isSameOrigin) {
-        const fs = target.requestFullscreen || target.webkitRequestFullscreen;
+        // ── Same-origin: fullscreen sobre elemento DENTRO del iframe ─────
+        // NO usamos target.requestFullscreen() porque eso pone el <iframe>
+        // en fullscreen y el reproductor dentro no gestiona su propio estado,
+        // rompiendo el botón de salir de pantalla completa del reproductor.
+        const doc = target.contentDocument;
+        // Buscar el elemento adecuado: contenedor del player, video, o body
+        const innerTarget =
+          doc.querySelector('.jw-wrapper, .jw-media, .video-js, .plyr, video') ||
+          doc.querySelector('video') ||
+          doc.body;
+        const fs = (innerTarget.requestFullscreen || innerTarget.webkitRequestFullscreen);
         if (fs) {
-          fs.call(target)
+          fs.call(innerTarget)
             .then(() => {
               try { target.contentWindow.postMessage({ _aap: true, type: 'PLAY_VIDEO' }, '*'); } catch (_) {}
               try {
-                const v = target.contentDocument?.querySelector('video');
+                const v = doc.querySelector('video');
                 if (v && v.paused) v.play().catch(() => {});
               } catch (_) {}
             })
-            .catch(() => {});
+            .catch(() => {
+              // Fallback: si falla el fullscreen interno, intentar con el iframe
+              DBG('activateFullscreenWithF: fallback a iframe.requestFullscreen');
+              const ffb = target.requestFullscreen || target.webkitRequestFullscreen;
+              if (ffb) ffb.call(target).catch(() => {});
+            });
           return;
         }
+        // Si no hay requestFullscreen en el elemento interno, usar PRESS_F
       }
 
-      // Cross-origin: guardar volumen, enviar PRESS_F, restaurar volumen tras 800ms
+      // Cross-origin (o same-origin sin requestFullscreen): doble estrategia
+      // 1. postMessage al iframe → player.js intenta APIs JWPlayer/VideoJS
       try { target.contentWindow.postMessage({ _aap: true, type: 'SAVE_AND_PRESSF' }, '*'); } catch (_) {}
+      // 2. PRESS_F real vía native host: enfoca el iframe y presiona F física
+      try { target.focus(); } catch (_) {}
+      setTimeout(() => {
+        chrome.runtime.sendMessage({ type: 'PRESS_F', action: 'PRESS_F', delay: 150 });
+      }, 200);
 
     } else if (target.tagName === 'VIDEO') {
       const wasMuted = target.muted;
@@ -647,14 +683,41 @@
 
     // Auto-click vía native host: simula un click real en el centro de la ventana
     // para evitar que el usuario tenga que pulsar manualmente.
+    //
+    // Estrategia para pantalla extendida (multi-monitor):
+    //   1. CLICK_CENTER busca la ventana de Chrome por clase Windows y clickea
+    //      en el centro (58% altura, área de contenido). Inmune a diferencias DPI.
+    //   2. Como red de seguridad, 800ms después también se envía el click por
+    //      coordenadas (screenX/screenY). El host Python tiene DPI awareness V2,
+    //      así que ambos métodos deberían acertar.
     (() => {
-      const x = Math.round(window.screenX + window.innerWidth / 2);
-      const y = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2);
-      chrome.runtime.sendMessage({ type: 'AUTO_CLICK', x, y, delay: 350 }, () => {
+      const isExtended = !!(window.screen && window.screen.isExtended);
+
+      // Intento 1: CLICK_CENTER (funciona independientemente del monitor)
+      // Incluir coordenadas de respaldo para que el host pueda hacer fallback
+      const fbX = Math.round(window.screenX + window.innerWidth / 2);
+      const fbY = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2);
+      chrome.runtime.sendMessage({ type: 'AUTO_CLICK', action: 'CLICK_CENTER', delay: 350, x: fbX, y: fbY }, (resp) => {
         if (chrome.runtime.lastError) {
-          DBG('[AAP Host] Auto-click no disponible:', chrome.runtime.lastError.message);
+          DBG('[AAP Host] CLICK_CENTER no disponible:', chrome.runtime.lastError.message);
+        } else if (resp && !resp.ok) {
+          DBG('[AAP Host] CLICK_CENTER falló:', resp.error);
         }
       });
+
+      // Intento 2 (red de seguridad, 800ms después): click por coordenadas
+      // En monitor único es suficiente; en extendido sirve de fallback.
+      setTimeout(() => {
+        // Si el prompt ya desapareció (el primer click funcionó), no enviar
+        if (!document.getElementById('_aap_fs_prompt')) return;
+        const x = Math.round(window.screenX + window.innerWidth / 2);
+        const y = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2);
+        chrome.runtime.sendMessage({ type: 'AUTO_CLICK', x, y, delay: 100 }, () => {
+          if (chrome.runtime.lastError) {
+            DBG('[AAP Host] fallback click no disponible:', chrome.runtime.lastError.message);
+          }
+        });
+      }, isExtended ? 800 : 0); // en monitor único, ambos intentos inmediatos; en extendido, 800ms de separación
     })();
 
     let done = false;
@@ -701,6 +764,7 @@
   function mutePlay(vid) {
     if (vid._aapMpInFlight) return Promise.resolve();
     vid._aapMpInFlight = true;
+    vid._aapOurPause = true; // evitar que el pause del mute se interprete como pausa del usuario
     if (vid._aapOrigMuted === undefined) vid._aapOrigMuted = vid.muted;
     const wasMuted = vid._aapOrigMuted;
     vid.muted = true;
@@ -708,23 +772,48 @@
       .then(() => { setTimeout(() => {
         vid.muted = wasMuted;
         if (vid.volume === 0) vid.volume = 1;
+        delete vid._aapOurPause;
         vid._aapMpInFlight = false;
       }, 300); })
-      .catch(() => { vid.muted = wasMuted; vid._aapMpInFlight = false; });
+      .catch(() => { vid.muted = wasMuted; delete vid._aapOurPause; vid._aapMpInFlight = false; });
   }
 
   function autoPlayWhenReady(fromPreviousEpisode) {
     if (!fromPreviousEpisode) return;
 
     let attempts = 0;
+    let stopped = false;
+
+    // Si el usuario pausa manualmente, abortar todos los reintentos
+    function onUserPause(e) {
+      const vid = e.target;
+      if (vid._aapOurPause) return; // pausa causada por nuestro código
+      if (!vid.paused) return;
+      DBG('autoPlayWhenReady: usuario pausó manualmente, abortando');
+      stopped = true;
+      clearInterval(poll);
+      document.removeEventListener('pause', onUserPause, true);
+    }
+    document.addEventListener('pause', onUserPause, true);
+
     const poll = setInterval(() => {
+      if (stopped) return;
       attempts++;
 
       // Vídeo directo en página (Asura/JWPlayer)
       const vid = document.querySelector('video');
+      if (vid && vid._aapUserPaused) {
+        DBG('autoPlayWhenReady: video pausado por usuario, abortando');
+        stopped = true;
+        clearInterval(poll);
+        document.removeEventListener('pause', onUserPause, true);
+        return;
+      }
       if (vid && vid.readyState >= 2 && vid.paused) {
         mutePlay(vid);
+        stopped = true;
         clearInterval(poll);
+        document.removeEventListener('pause', onUserPause, true);
         return;
       }
 
@@ -733,9 +822,11 @@
         if (!f.src || f.src.includes('facebook') || f.src.includes('disqus')) continue;
         try {
           const v = f.contentDocument?.querySelector('video');
-          if (v && v.readyState >= 2 && v.paused) {
+          if (v && v.readyState >= 2 && v.paused && !v._aapUserPaused) {
             mutePlay(v);
+            stopped = true;
             clearInterval(poll);
+            document.removeEventListener('pause', onUserPause, true);
             return;
           }
         } catch (_) {}
@@ -751,7 +842,7 @@
         });
       }
 
-      if (attempts >= 20) clearInterval(poll); // máx 10s
+      if (attempts >= 20) { clearInterval(poll); document.removeEventListener('pause', onUserPause, true); } // máx 10s
     }, 500);
   }
 
