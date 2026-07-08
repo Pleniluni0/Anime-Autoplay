@@ -314,7 +314,7 @@
     });
 
     v.addEventListener('loadedmetadata', () => { DBG('video loadedmetadata, duration=', v.duration); earlyFired=false; introSkipDone=false; hideMainSkipBtn(); hideMainCountdown(); });
-    v.addEventListener('ended', () => { DBG('video ended → countdown'); hideMainSkipBtn(); if (settings.autoplay) setTimeout(startMainCountdown, 500); });
+    v.addEventListener('ended', () => { DBG('video ended → countdown'); hideMainSkipBtn(); if (settings.autoplay) setTimeout(startMainCountdown, 150); });
     v.addEventListener('timeupdate', () => {
       const t=v.currentTime, dur=v.duration;
       if (settings.introSkip && !introSkipDone && settings.introTo > settings.introFrom) {
@@ -684,20 +684,33 @@
     // Auto-click vía native host: simula un click real en el centro de la ventana
     // para evitar que el usuario tenga que pulsar manualmente.
     //
-    // Estrategia para pantalla extendida (multi-monitor):
+    // Estrategia para cualquier setup (1 o N monitores, distinto DPI):
     //   1. CLICK_CENTER busca la ventana de Chrome por clase Windows y clickea
-    //      en el centro (58% altura, área de contenido). Inmune a diferencias DPI.
-    //   2. Como red de seguridad, 800ms después también se envía el click por
-    //      coordenadas (screenX/screenY). El host Python tiene DPI awareness V2,
-    //      así que ambos métodos deberían acertar.
+    //      en el centro (58% altura, área de contenido). Usa GetWindowRect →
+    //      coordenadas físicas reales. Inmune a diferencias DPI entre monitores.
+    //   2. Como red de seguridad, 900ms después se envía click por coordenadas
+    //      convertidas a píxeles físicos con devicePixelRatio.
+    //      Solo se dispara si el prompt sigue visible (CLICK_CENTER no funcionó).
     (() => {
-      const isExtended = !!(window.screen && window.screen.isExtended);
+      const dpr = window.devicePixelRatio || 1;
 
-      // Intento 1: CLICK_CENTER (funciona independientemente del monitor)
-      // Incluir coordenadas de respaldo para que el host pueda hacer fallback
-      const fbX = Math.round(window.screenX + window.innerWidth / 2);
-      const fbY = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2);
-      chrome.runtime.sendMessage({ type: 'AUTO_CLICK', action: 'CLICK_CENTER', delay: 350, x: fbX, y: fbY }, (resp) => {
+      // Coordenadas en píxeles FÍSICOS (multiplicamos CSS px por DPR)
+      const centerCssX = window.screenX + window.innerWidth / 2;
+      const centerCssY = window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2;
+      const fbX = Math.round(centerCssX * dpr);
+      const fbY = Math.round(centerCssY * dpr);
+
+      DBG('Fullscreen prompt: dpr=', dpr, 'cssCenter=', Math.round(centerCssX), Math.round(centerCssY), 'physCenter=', fbX, fbY);
+
+      // Intento 1: CLICK_CENTER — busca la ventana por HWND, inmune a DPI
+      // Enviamos screenX/Y/outerWidth/outerHeight para que el host encuentre
+      // la ventana CORRECTA cuando hay múltiples ventanas en distintos monitores
+      chrome.runtime.sendMessage({
+        type: 'AUTO_CLICK', action: 'CLICK_CENTER', delay: 100,
+        x: fbX, y: fbY,
+        winX: window.screenX, winY: window.screenY,
+        winW: window.outerWidth, winH: window.outerHeight
+      }, (resp) => {
         if (chrome.runtime.lastError) {
           DBG('[AAP Host] CLICK_CENTER no disponible:', chrome.runtime.lastError.message);
         } else if (resp && !resp.ok) {
@@ -705,19 +718,18 @@
         }
       });
 
-      // Intento 2 (red de seguridad, 800ms después): click por coordenadas
-      // En monitor único es suficiente; en extendido sirve de fallback.
+      // Intento 2 (red de seguridad, 200ms después): click por coordenadas físicas
+      // CLICK_CENTER (100ms + ejecución) siempre termina primero. Si funcionó,
+      // el prompt ya no existe y no se envía nada.
       setTimeout(() => {
-        // Si el prompt ya desapareció (el primer click funcionó), no enviar
         if (!document.getElementById('_aap_fs_prompt')) return;
-        const x = Math.round(window.screenX + window.innerWidth / 2);
-        const y = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2);
-        chrome.runtime.sendMessage({ type: 'AUTO_CLICK', x, y, delay: 100 }, () => {
+        DBG('[AAP Host] Prompt sigue visible, lanzando fallback click en', fbX, fbY);
+        chrome.runtime.sendMessage({ type: 'AUTO_CLICK', x: fbX, y: fbY, delay: 100 }, () => {
           if (chrome.runtime.lastError) {
             DBG('[AAP Host] fallback click no disponible:', chrome.runtime.lastError.message);
           }
         });
-      }, isExtended ? 800 : 0); // en monitor único, ambos intentos inmediatos; en extendido, 800ms de separación
+      }, 200);
     })();
 
     let done = false;
@@ -842,8 +854,8 @@
         });
       }
 
-      if (attempts >= 20) { clearInterval(poll); document.removeEventListener('pause', onUserPause, true); } // máx 10s
-    }, 500);
+      if (attempts >= 20) { clearInterval(poll); document.removeEventListener('pause', onUserPause, true); } // máx 6s
+    }, 300);
   }
 
   // Restaurar reproductor, play y fullscreen al cargar
@@ -1043,14 +1055,14 @@
           if (realIframeReady() || (IS_MUNDO && videoReady)) {
             DBG('player real detectado tras', attempts, 'intentos, lanzando autoPlay');
             clearInterval(poll);
-            setTimeout(() => autoPlayWhenReady(fromPrevEpisode), 1500);
+            setTimeout(() => autoPlayWhenReady(fromPrevEpisode), 300);
             return;
           }
           if (attempts >= 60) { // 30s
             DBG('doRestore: timeout esperando player (usuario debe hacer click en play)');
             clearInterval(poll);
           }
-        }, 500);
+        }, 300);
       }
 
       // Esperar a que los tabs del player estén en el DOM
@@ -1066,7 +1078,7 @@
             clearInterval(waitForTabs);
             doRestore();
           }
-        }, 150);
+        }, 60);
       }
     });
   }

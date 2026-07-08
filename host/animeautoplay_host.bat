@@ -1,2 +1,2 @@
 @echo off
-python "%~dp0animeautoplay_host.py"
+"C:\Users\juanj\AppData\Local\Programs\Python\Python313\python.exe" "%~dp0animeautoplay_host.py"

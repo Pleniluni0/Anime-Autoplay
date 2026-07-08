@@ -58,7 +58,7 @@
     v.addEventListener('loadedmetadata', () => { earlyFired = false; introSkipDone = false; });
 
     v.addEventListener('ended', () => {
-      if (S.autoplay) setTimeout(() => notifyUp('TRIGGER'), 500);
+      if (S.autoplay) setTimeout(() => notifyUp('TRIGGER'), 150);
     });
 
     v.addEventListener('timeupdate', () => {

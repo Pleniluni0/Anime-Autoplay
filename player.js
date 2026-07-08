@@ -167,7 +167,7 @@
       if (attempt() || Date.now() - start > MAX_MS) {
         cleanup();
       }
-    }, 400);
+    }, 250);
 
     // También observar nuevos elementos <video> añadidos al DOM (Dailymotion lo crea dinámicamente)
     playPersistentObserver = new MutationObserver(() => { attempt(); });
@@ -508,7 +508,7 @@
 
     v.addEventListener('ended', () => {
       hideSkipBtn();
-      if (S.autoplay) setTimeout(startCountdown, 500);
+      if (S.autoplay) setTimeout(startCountdown, 150);
     });
 
     v.addEventListener('timeupdate', () => {

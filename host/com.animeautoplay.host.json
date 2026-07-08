@@ -1,9 +1,9 @@
-﻿{
+{
     "name":  "com.animeautoplay.host",
     "description":  "Anime AutoPlay Native Host â€” simula clicks reales para fullscreen",
-    "path":  "E:\\Programacion\\Estensiones de navegador\\Anime autoplay\\host-animeav1-autoplay\\host\\animeautoplay_host.bat",
+    "path":  "E:\\Programacion\\Extensiones de navegador\\Anime autoplay\\host-animeav1-autoplay\\host\\animeautoplay_host.bat",
     "type":  "stdio",
     "allowed_origins":  [
-                            "chrome-extension://iifcdikacallbleibheomdonlnfjlcnd/"
+                            "chrome-extension://klbgjobpgkgbaemmlhncgfnhpklafeip/"
                         ]
 }

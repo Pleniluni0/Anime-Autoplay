@@ -119,14 +119,16 @@ def _win_click(x, y):
     log(f'_win_click: SendInput click completado en ({int(x)},{int(y)})')
 
 
-def _find_chrome_window():
+def _find_chrome_window(expected_x=None, expected_y=None, expected_w=None, expected_h=None):
     """Busca la ventana de Chrome más probable (la del reproductor de anime).
     SOLO busca ventanas con clase Chrome_WidgetWin_1. Filtra ventanas de chat,
-    settings, extensiones, etc. Sin fallbacks por título (peligrosos)."""
-    user32 = ctypes.windll.user32
+    settings, extensiones, etc. Sin fallbacks por título (peligrosos).
 
-    # Pequeña pausa para que Chrome traiga la ventana al frente
-    time.sleep(0.2)
+    Si se pasan expected_x/y/w/h (coordenadas de la ventana desde el content script),
+    se busca la ventana cuyas coordenadas coincidan (con tolerancia de ~100px para
+    diferencias de DPI/redondeo). Esto resuelve el caso de múltiples ventanas de
+    Chrome en distintos monitores."""
+    user32 = ctypes.windll.user32
 
     # Palabras que indican que NO es una ventana de anime/reproductor
     BAD_TITLES = [
@@ -137,7 +139,67 @@ def _find_chrome_window():
         'odysseus', 'program manager',
     ]
 
-    # Primero: foreground window (rápido, si es Chrome)
+    class RECT(ctypes.Structure):
+        _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                    ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+
+    # ── Si tenemos coordenadas esperadas, enumerar y buscar coincidencia ──
+    if expected_x is not None and expected_y is not None:
+        log(f'_find_chrome: buscando ventana en ({expected_x},{expected_y}) {expected_w}x{expected_h}')
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        best_match = None
+        best_score = 999999
+
+        def enum_match(hwnd, _lparam):
+            nonlocal best_match, best_score
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            class_buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_buf, 255)
+            if class_buf.value != 'Chrome_WidgetWin_1':
+                return True
+            r = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(r)):
+                return True
+            w = r.right - r.left
+            h = r.bottom - r.top
+            if w < 400 or h < 300:
+                return True
+            # Filtrar herramientas
+            tlen = user32.GetWindowTextLengthW(hwnd)
+            title = ''
+            if tlen > 0:
+                tb = ctypes.create_unicode_buffer(tlen + 1)
+                user32.GetWindowTextW(hwnd, tb, tlen + 1)
+                title = tb.value
+            title_lower = title.lower()
+            if any(b in title_lower for b in BAD_TITLES):
+                return True
+
+            # Calcular score: distancia entre esquina superior-izquierda
+            dx = abs(r.left - expected_x)
+            dy = abs(r.top - expected_y)
+            score = dx + dy
+            # Preferir tamaños similares
+            if expected_w and expected_h:
+                score += abs(w - expected_w) * 0.5 + abs(h - expected_h) * 0.5
+            log(f'_find_chrome:   candidato "{title}" ({r.left},{r.top}) {w}x{h} score={score:.0f}')
+            if score < best_score:
+                best_score = score
+                best_match = hwnd
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(enum_match), 0)
+
+        if best_match is not None and best_score < 300:  # tolerancia ~300px
+            r = RECT()
+            user32.GetWindowRect(best_match, ctypes.byref(r))
+            log(f'_find_chrome: encontrada por coordenadas, score={best_score:.0f} ({r.left},{r.top})-({r.right},{r.bottom})')
+            return best_match
+        else:
+            log(f'_find_chrome: no se encontró coincidencia por coordenadas (best_score={best_score})')
+
+    # ── Fallback: foreground window (rápido, si es Chrome) ──
     fg = user32.GetForegroundWindow()
     if fg:
         class_buf = ctypes.create_unicode_buffer(256)
@@ -159,13 +221,9 @@ def _find_chrome_window():
             else:
                 log(f'_find_chrome: Foreground DESCARTADA (es herramienta/chat)')
 
-    # Segundo: enumerar TODAS las ventanas Chrome_WidgetWin_1 visibles
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    # ── Último recurso: enumerar TODAS y elegir la más grande ──
+    WNDENUMPROC2 = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
     found = []
-
-    class RECT(ctypes.Structure):
-        _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
-                    ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
 
     def enum_proc(hwnd, _lparam):
         if user32.IsWindowVisible(hwnd):
@@ -176,7 +234,6 @@ def _find_chrome_window():
                 if user32.GetWindowRect(hwnd, ctypes.byref(r)):
                     w = r.right - r.left
                     h = r.bottom - r.top
-                    # Filtrar por título
                     tlen = user32.GetWindowTextLengthW(hwnd)
                     title = ''
                     if tlen > 0:
@@ -189,13 +246,13 @@ def _find_chrome_window():
                         found.append((hwnd, w * h, r.left, r.top, w, h, title))
         return True
 
-    user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
+    user32.EnumWindows(WNDENUMPROC2(enum_proc), 0)
     log(f'_find_chrome: {len(found)} ventanas Chrome_WidgetWin_1 válidas encontradas')
 
     if found:
         found.sort(key=lambda x: x[1], reverse=True)
         _, _, left, top, w, h, title = found[0]
-        log(f'_find_chrome: elegida "{title}" ({w}x{h} en {left},{top})')
+        log(f'_find_chrome: elegida (más grande) "{title}" ({w}x{h} en {left},{top})')
         return found[0][0]
 
     log('_find_chrome: NINGUNA ventana Chrome de anime encontrada')
@@ -235,7 +292,12 @@ def handle(msg):
         time.sleep(delay_ms / 1000.0)
 
         if os.name == 'nt':
-            hwnd = _find_chrome_window()
+            # Pasar coordenadas de ventana desde el content script para
+            # encontrar la ventana correcta en setups multi-monitor
+            hwnd = _find_chrome_window(
+                expected_x=msg.get('winX'), expected_y=msg.get('winY'),
+                expected_w=msg.get('winW'), expected_h=msg.get('winH')
+            )
             if not hwnd:
                 # Fallback: usar coordenadas del mensaje si existen
                 fb_x = msg.get('x')
