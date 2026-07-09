@@ -4,6 +4,12 @@ Extensión de Chrome que convierte sitios de anime/donghua en una experiencia ti
 
 Funciona en **dos modos**: con host nativo instalado (totalmente automático) o sin él (igual que una extensión normal, con un click manual para activar fullscreen).
 
+## 🚀 Novedades recientes
+
+- **Soporte multi-monitor**: el host Python identifica la ventana correcta usando las coordenadas reales (`screenX`/`screenY`) enviadas desde el content script. Funciona aunque tengas ventanas de Chrome/Brave en varios monitores.
+- **Clicks vía Windows API**: `SetCursorPos` + `SendInput` en lugar de `pyautogui.click()` — más fiable en setups con distinto DPI por monitor.
+- **Delays optimizados**: reducidos drásticamente (~2s más rápido entre episodios) tras migrar la lógica de click al host Python.
+
 ## Sitios probados
 
 - AnimeAV1
@@ -87,23 +93,39 @@ Abre el popup pulsando el icono de la extensión:
 
 La extensión usa cuatro scripts coordinados:
 
-- **`main.js`** — corre en la página principal. Detecta el botón de "Siguiente episodio", muestra los overlays, gestiona flags entre navegaciones. Cuando aparece el overlay de fullscreen envía las coordenadas al background para el auto-click.
+- **`main.js`** — corre en la página principal. Detecta el botón de "Siguiente episodio", muestra los overlays, gestiona flags entre navegaciones. Cuando aparece el overlay de fullscreen envía las coordenadas del click **y las coordenadas de la ventana** (`screenX`, `screenY`, `outerWidth`, `outerHeight`) al background para que el host encuentre la ventana correcta incluso en setups multi-monitor.
 - **`background.js`** — service worker que recibe el mensaje de `main.js` y lo reenvía al host nativo vía `chrome.runtime.sendNativeMessage`.
 - **`bridge.js`** — corre en iframes intermedios del mismo origen. Reenvía mensajes entre la página principal y los iframes cross-origin del reproductor real.
 - **`player.js`** — corre en cualquier iframe (Dailymotion, Voe, JWPlayer, etc.). Engancha el `<video>`, gestiona el salto de intro y el unmute tras autoplay.
+
+### Flujo del click automático (modo host)
+
+```
+1. main.js detecta el overlay de fullscreen
+2. Calcula fbX/fbY (centro del overlay) + winX/winY/winW/winH (coordenadas de la ventana)
+3. Envía CLICK_CENTER con delay 200ms → background.js → host Python
+4. El host busca la ventana Chrome cuyas coordenadas coincidan con las enviadas (±300px tolerancia)
+5. Si no encuentra match exacto → fallback: foreground window → ventana más grande
+6. Calcula el centro geométrico de la ventana y ejecuta el click vía SetCursorPos + SendInput
+7. Si todo falla, 200ms después se lanza AUTO_CLICK por coordenadas físicas (red de seguridad)
+```
+
+El tiempo total desde que aparece el overlay hasta el click efectivo es de ~250ms.
 
 ### Host nativo (`host/`)
 
 | Archivo | Descripción |
 | --- | --- |
-| `animeautoplay_host.py` | Script Python que lee mensajes JSON del stdin y ejecuta clicks con `pyautogui` |
+| `animeautoplay_host.py` | Script Python que lee mensajes JSON del stdin y ejecuta clicks reales. Usa **Windows API directa** (`SetCursorPos` + `SendInput`) para máxima fiabilidad multi-monitor/DPI. Busca la ventana correcta por coordenadas antes de caer en foreground/largest. |
 | `animeautoplay_host.bat` | Lanzador que Chrome usa para arrancar el script |
 | `com.animeautoplay.host.json` | Manifiesto del host con la ruta al `.bat` y el ID de la extensión |
 | `install_host.ps1` | Registra el host en `HKCU\SOFTWARE\Google\Chrome\NativeMessagingHosts` |
 
 ### Por qué funciona el click del host
 
-Chrome bloquea `requestFullscreen()` sin un gesto real del usuario (`isTrusted: true`). Un click de JavaScript tiene `isTrusted: false` y no vale. El host Python usa `pyautogui` que simula un click a nivel del sistema operativo — el navegador lo recibe como si lo hubiera hecho el usuario físicamente.
+Chrome bloquea `requestFullscreen()` sin un gesto real del usuario (`isTrusted: true`). Un click de JavaScript tiene `isTrusted: false` y no vale. El host Python usa `SetCursorPos` + `SendInput` (Windows API) que simula un click a nivel del sistema operativo — el navegador lo recibe como si lo hubiera hecho el usuario físicamente.
+
+**¿Por qué Windows API y no pyautogui?** En setups multi-monitor con diferente escala DPI por pantalla, `pyautogui.click()` a veces falla porque no maneja bien las coordenadas virtualizadas. `SetCursorPos` + `SendInput` usa las coordenadas físicas reales y es inmune a ese problema.
 
 ### Restricciones del navegador (sin host)
 
