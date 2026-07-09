@@ -1,5 +1,7 @@
 # Host Anime Autoplay
 
+<!-- workflow test -->
+
 Extensión de Chrome que convierte sitios de anime/donghua en una experiencia tipo Netflix: cuenta atrás al final del episodio, paso automático al siguiente, pantalla completa y salto de intro configurable.
 
 Funciona en **dos modos**: con host nativo instalado (totalmente automático) o sin él (igual que una extensión normal, con un click manual para activar fullscreen).
