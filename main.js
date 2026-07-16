@@ -324,8 +324,9 @@
       }
       const skip=settings.skipBeforeEnd||0;
       if (!settings.autoplay||earlyFired||mainCountdownActive||skip<=0||!dur||dur<30) return;
+      const effectiveSkip=245-skip; // invertido: slider más alto = más cerca del final
       const rem=dur-t;
-      if (rem>0&&rem<=skip) { earlyFired=true; v.addEventListener('seeking',()=>{earlyFired=false},{once:true}); startMainCountdown(); }
+      if (rem>0&&rem<=effectiveSkip) { earlyFired=true; v.addEventListener('seeking',()=>{earlyFired=false},{once:true}); startMainCountdown(); }
     });
   }
 

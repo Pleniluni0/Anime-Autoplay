@@ -164,7 +164,8 @@ function updateSkipPreview(s) {
     skipPreview.textContent = 'Desactivado — aparece al terminar el vídeo';
     skipPreview.classList.remove('active');
   } else {
-    const m = Math.floor(s / 60), sec = s % 60;
+    const effective = 245 - s; // invertido: slider más alto = más cerca del final
+    const m = Math.floor(effective / 60), sec = effective % 60;
     const label = m > 0 ? `${m}m ${sec > 0 ? sec + 's' : ''}` : `${sec}s`;
     skipPreview.textContent = `⏭ Aparece ${label} antes del final`;
     skipPreview.classList.add('active');
