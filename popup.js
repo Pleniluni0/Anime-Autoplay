@@ -41,6 +41,8 @@ function formatTime(secs) {
 
 const rememberPlayerToggle = document.getElementById('remember-player-toggle');
 const autofsToogle         = document.getElementById('autofs-toggle');
+const rowRememberPlayer    = document.getElementById('row-remember-player');
+const rowAutofs            = document.getElementById('row-autofs');
 
 // ── Load settings ──────────────────────────────────────────────────────────────
 chrome.storage.sync.get({
@@ -196,6 +198,8 @@ pillAuto.addEventListener('click', updateIntroPreview);
 function updateSectionsState(on) {
   sectionCountdown.classList.toggle('disabled-section', !on);
   sectionSkip.classList.toggle('disabled-section', !on);
+  rowRememberPlayer.classList.toggle('disabled-section', !on);
+  rowAutofs.classList.toggle('disabled-section', !on);
 }
 
 function updateStatus(on) {
@@ -205,18 +209,24 @@ function updateStatus(on) {
     const ok = sites.some(s => url.includes(s));
     statusText.textContent = ok
       ? (on ? '✅ Activo en esta página' : '⏸ Desactivado')
-      : 'AV1 · FLV · SDonghua · Mundo · DLife';
+      : 'Extensión lista';
   });
 }
 
 // ── Help screen toggle ────────────────────────────────────────────────────────
-const screenMain = document.getElementById('screen-main');
-const screenHelp = document.getElementById('screen-help');
-document.getElementById('help-toggle').addEventListener('click', () => {
-  screenMain.style.display = 'none';
-  screenHelp.style.display = 'flex';
-});
-document.getElementById('help-back').addEventListener('click', () => {
-  screenHelp.style.display = 'none';
-  screenMain.style.display = 'flex';
+const screenMain  = document.getElementById('screen-main');
+const screenHelp  = document.getElementById('screen-help');
+const helpToggle  = document.getElementById('help-toggle');
+
+helpToggle.addEventListener('click', () => {
+  const showingHelp = screenHelp.style.display === 'flex';
+  if (showingHelp) {
+    screenHelp.style.display = 'none';
+    screenMain.style.display = 'flex';
+    helpToggle.textContent = '?';
+  } else {
+    screenMain.style.display = 'none';
+    screenHelp.style.display = 'flex';
+    helpToggle.textContent = '←';
+  }
 });
