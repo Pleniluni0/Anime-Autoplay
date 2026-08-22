@@ -1,10 +1,10 @@
-# Host Anime Autoplay
-
-<!-- workflow test -->
+# Anime AutoPlay
 
 Extensión de Chrome que convierte sitios de anime/donghua en una experiencia tipo Netflix: cuenta atrás al final del episodio, paso automático al siguiente, pantalla completa y salto de intro configurable.
 
-Funciona en **dos modos**: con host nativo instalado (totalmente automático) o sin él (igual que una extensión normal, con un click manual para activar fullscreen).
+> **Disponible en dos versiones:**
+> - [Chrome Web Store](https://chrome.google.com/webstore) — versión oficial con un click por episodio
+> - **GitHub** — misma versión + host nativo opcional para experiencia totalmente automática (cero clicks)
 
 ## 🚀 Novedades recientes
 
@@ -24,22 +24,22 @@ Funciona en la mayoría de los reproductores embebidos (Dailymotion, Voe, JWPlay
 
 ## Modos de funcionamiento
 
-### Modo automático (con host nativo)
+### Modo automático (con host nativo) — Solo desde GitHub
 
 Cuando el episodio termina, la extensión pasa al siguiente y activa el reproductor + pantalla completa **sin ninguna interacción del usuario**. Para lograrlo, un script Python local simula un click real del sistema operativo, lo que le da al navegador el gesto de usuario necesario para entrar en fullscreen.
 
 ```
-Extensión → background.js → Native Messaging → Python (pyautogui) → click real del SO
+Extensión → background.js → Native Messaging → Python → click real del SO
 ```
 
-### Modo manual (sin host nativo)
+### Modo manual (versión Chrome Web Store)
 
-Si el host no está instalado, la extensión funciona igual que una extensión normal: al pasar de episodio aparece un overlay en pantalla y el usuario pulsa una vez para activar el reproductor y la pantalla completa. El resto (autoplay, countdown, saltar intro…) funciona exactamente igual.
+Si el host no está instalado (versión de Store), la extensión funciona con un overlay de pantalla completa: el usuario pulsa una vez para activar el reproductor y la pantalla completa. El resto (autoplay, countdown, saltar intro…) funciona exactamente igual.
 
 ## Funcionalidades
 
 - **Reproducción automática** con overlay de cuenta atrás (3–15 s). Botones *Ver ahora* / *Cancelar*.
-- **Modo automático**: click automático vía host nativo, sin tocar nada.
+- **Modo automático** (con host nativo, instalación separada): click automático vía host nativo, sin tocar nada.
 - **Recordar reproductor**: guarda qué servidor elegiste y lo selecciona solo al cambiar de episodio.
 - **Salto de intro/opening**: configura inicio y fin (ej. `0:00 → 1:30`).
   - *Manual*: botón flotante "⏩ Saltar intro" sobre el vídeo.
@@ -49,14 +49,20 @@ Si el host no está instalado, la extensión funciona igual que una extensión n
 
 ## Instalación
 
-### 1. Cargar la extensión en Chrome
+### Versión Chrome Web Store (recomendada)
+
+1. Abre [Chrome Web Store](https://chrome.google.com/webstore) y busca "Anime AutoPlay".
+2. Pulsa **Añadir a Chrome**.
+3. Listo. La extensión funciona inmediatamente en los sitios soportados.
+
+### Versión desde GitHub (desarrollador)
 
 1. Abre `chrome://extensions/` en Chrome (o Edge/Brave/etc.).
 2. Activa el **Modo de desarrollador** (esquina superior derecha).
-3. Pulsa **Cargar descomprimida** y selecciona la carpeta `host-animeav1-autoplay`.
+3. Pulsa **Cargar descomprimida** y selecciona la carpeta del proyecto.
 4. Copia el **ID** de la extensión que aparece debajo del nombre.
 
-### 2. Activar el modo automático (opcional)
+### Activar el modo automático (host nativo, solo desde GitHub)
 
 Si quieres el modo totalmente automático necesitas instalar el host nativo:
 
@@ -85,7 +91,7 @@ Abre el popup pulsando el icono de la extensión:
 | Opción | Descripción |
 | --- | --- |
 | Reproducción automática | Activa el paso al siguiente episodio |
-| Modo automático | Click automático vía host nativo (requiere instalación) |
+| Fullscreen al cargar | Overlay de pantalla completa al pasar de episodio |
 | Cuenta atrás | Segundos antes de saltar (3–15) |
 | Recordar reproductor | Mantiene el mismo servidor entre episodios |
 | Saltar intro / opening | Define rango y modo (manual/automático) |
@@ -96,51 +102,15 @@ Abre el popup pulsando el icono de la extensión:
 La extensión usa cuatro scripts coordinados:
 
 - **`main.js`** — corre en la página principal. Detecta el botón de "Siguiente episodio", muestra los overlays, gestiona flags entre navegaciones. Cuando aparece el overlay de fullscreen envía las coordenadas del click **y las coordenadas de la ventana** (`screenX`, `screenY`, `outerWidth`, `outerHeight`) al background para que el host encuentre la ventana correcta incluso en setups multi-monitor.
-- **`background.js`** — service worker que recibe el mensaje de `main.js` y lo reenvía al host nativo vía `chrome.runtime.sendNativeMessage`.
+- **`background.js`** — service worker que recibe el mensaje de `main.js` y lo reenvía al host nativo vía `chrome.runtime.sendNativeMessage` (si está instalado).
 - **`bridge.js`** — corre en iframes intermedios del mismo origen. Reenvía mensajes entre la página principal y los iframes cross-origin del reproductor real.
-- **`player.js`** — corre en cualquier iframe (Dailymotion, Voe, JWPlayer, etc.). Engancha el `<video>`, gestiona el salto de intro y el unmute tras autoplay.
-
-### Flujo del click automático (modo host)
-
-```
-1. main.js detecta el overlay de fullscreen
-2. Calcula fbX/fbY (centro del overlay) + winX/winY/winW/winH (coordenadas de la ventana)
-3. Envía CLICK_CENTER con delay 200ms → background.js → host Python
-4. El host busca la ventana Chrome cuyas coordenadas coincidan con las enviadas (±300px tolerancia)
-5. Si no encuentra match exacto → fallback: foreground window → ventana más grande
-6. Calcula el centro geométrico de la ventana y ejecuta el click vía SetCursorPos + SendInput
-7. Si todo falla, 200ms después se lanza AUTO_CLICK por coordenadas físicas (red de seguridad)
-```
-
-El tiempo total desde que aparece el overlay hasta el click efectivo es de ~250ms.
-
-### Host nativo (`host/`)
-
-| Archivo | Descripción |
-| --- | --- |
-| `animeautoplay_host.py` | Script Python que lee mensajes JSON del stdin y ejecuta clicks reales. Usa **Windows API directa** (`SetCursorPos` + `SendInput`) para máxima fiabilidad multi-monitor/DPI. Busca la ventana correcta por coordenadas antes de caer en foreground/largest. |
-| `animeautoplay_host.bat` | Lanzador que Chrome usa para arrancar el script |
-| `com.animeautoplay.host.json` | Manifiesto del host con la ruta al `.bat` y el ID de la extensión |
-| `install_host.ps1` | Registra el host en `HKCU\SOFTWARE\Google\Chrome\NativeMessagingHosts` |
-
-### Por qué funciona el click del host
-
-Chrome bloquea `requestFullscreen()` sin un gesto real del usuario (`isTrusted: true`). Un click de JavaScript tiene `isTrusted: false` y no vale. El host Python usa `SetCursorPos` + `SendInput` (Windows API) que simula un click a nivel del sistema operativo — el navegador lo recibe como si lo hubiera hecho el usuario físicamente.
-
-**¿Por qué Windows API y no pyautogui?** En setups multi-monitor con diferente escala DPI por pantalla, `pyautogui.click()` a veces falla porque no maneja bien las coordenadas virtualizadas. `SetCursorPos` + `SendInput` usa las coordenadas físicas reales y es inmune a ese problema.
-
-### Restricciones del navegador (sin host)
-
-Sin host, la extensión usa estas alternativas:
-
-- **Truco mute → play → unmute**: el autoplay siempre permite vídeo muteado; se reproduce muteado y se restaura el volumen a los 300 ms.
-- **Prompt de fullscreen con transient activation**: el overlay grande que aparece al cargar el episodio; el click del usuario activa fullscreen dentro de la ventana de ~5 s de activación de Chrome.
+- **`player.js`** — corre en iframes de reproductores (Dailymotion, Voe, JWPlayer, etc.). Engancha el `<video>`, gestiona el salto de intro y el unmute tras autoplay.
 
 ## Estructura del repositorio
 
 ```
 .
-├── manifest.json          # Manifest V3
+├── manifest.json          # Manifest V3 (sin nativeMessaging para Store)
 ├── main.js                # Script principal (top frame)
 ├── background.js          # Service worker — puente hacia el host nativo
 ├── bridge.js              # Relay de mensajes en iframes intermedios
@@ -148,12 +118,14 @@ Sin host, la extensión usa estas alternativas:
 ├── popup.html             # UI de configuración
 ├── popup.js               # Lógica del popup
 ├── overlay.css            # Estilos compartidos de overlays
+├── PRIVACY.md             # Política de privacidad
+├── DESCRIPTION.md         # Texto para la Chrome Web Store
 ├── icons/                 # Iconos de la extensión
-└── host/
-    ├── animeautoplay_host.py         # Script Python del host nativo
-    ├── animeautoplay_host.bat        # Lanzador para Chrome
-    ├── com.animeautoplay.host.json   # Manifiesto del host
-    └── install_host.ps1              # Script de instalación (registro en Windows)
+└── host/                  # Host nativo (solo para instalación desde GitHub)
+    ├── animeautoplay_host.py
+    ├── animeautoplay_host.bat
+    ├── com.animeautoplay.host.template.json
+    └── install_host.ps1
 ```
 
 ## Licencia

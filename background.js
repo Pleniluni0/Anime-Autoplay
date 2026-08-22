@@ -1,17 +1,31 @@
-// background.js — recibe mensajes de content scripts y los envía al native host
+// background.js — Anime AutoPlay (Store version)
+// Sin native messaging. El service worker queda como placeholder para
+// futura compatibilidad con el host nativo instalado externamente.
+// De momento solo registra que está activo.
 
-const HOST_NAME = 'com.animeautoplay.host';
+console.log('[AAP] Background service worker loaded (Store version)');
 
+// Si el usuario instala el host nativo por separado (desde GitHub),
+// este listener se activará. Mientras tanto, rechaza silenciosamente.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Aceptar AUTO_CLICK, PRESS_F, CLICK_CENTER y cualquier mensaje para el host
-  if (!msg.type || !['AUTO_CLICK', 'PRESS_F', 'CLICK_CENTER'].includes(msg.type)) return;
+  if (!msg || !msg.type) return false;
 
-  chrome.runtime.sendNativeMessage(HOST_NAME, msg, (response) => {
-    if (chrome.runtime.lastError) {
-      console.warn('[AAP Host] Native message error:', chrome.runtime.lastError.message);
+  // Mensajes que van al host nativo — si no está instalado, fallan silenciosamente
+  if (['AUTO_CLICK', 'PRESS_F', 'CLICK_CENTER'].includes(msg.type)) {
+    try {
+      chrome.runtime.sendNativeMessage('com.animeautoplay.host', msg, (response) => {
+        if (chrome.runtime.lastError) {
+          // Host no instalado — es normal, respuesta silenciosa
+          sendResponse({ ok: false, error: 'host_not_installed' });
+        } else {
+          sendResponse(response ?? { ok: false });
+        }
+      });
+    } catch (_) {
+      sendResponse({ ok: false, error: 'host_not_available' });
     }
-    sendResponse(response ?? { ok: false });
-  });
+    return true; // async
+  }
 
-  return true; // async
+  return false;
 });

@@ -1,43 +1,52 @@
 {
   "manifest_version": 3,
-  "name": "Host Anime Autoplay",
+  "name": "Anime AutoPlay",
   "version": "6.2.0",
-  "description": "Autoplay con click automático vía native host.",
-  "permissions": ["storage", "nativeMessaging"],
+  "description": "Autoplay for anime sites — countdown, intro skip, fullscreen, player memory.",
+  "permissions": ["storage"],
   "background": {
     "service_worker": "background.js"
   },
-  "host_permissions": ["*://*/*"],
+  "host_permissions": [
+    "*://*.animeav1.com/*",
+    "*://*.animeflv.net/*",
+    "*://*.seriesdonghua.com/*",
+    "*://*.mundodonghua.com/*",
+    "*://*.donghualife.com/*"
+  ],
   "content_scripts": [
     {
       "matches": [
-        "*://*.animeav1.com/*",    "*://animeav1.com/*",
-        "*://*.animeflv.net/*",    "*://animeflv.net/*",
-        "*://www4.animeflv.net/*", "*://www3.animeflv.net/*",
-        "*://www2.animeflv.net/*", "*://www.animeflv.net/*",
-        "*://*.seriesdonghua.com/*", "*://seriesdonghua.com/*",
-        "*://*.mundodonghua.com/*",  "*://mundodonghua.com/*",
-        "*://*.donghualife.com/*",   "*://donghualife.com/*"
+        "*://*.animeav1.com/*",
+        "*://*.animeflv.net/*",
+        "*://*.seriesdonghua.com/*",
+        "*://*.mundodonghua.com/*",
+        "*://*.donghualife.com/*"
       ],
       "js": ["main.js"],
-      "run_at": "document_end",
-      "all_frames": false
+      "run_at": "document_end"
     },
     {
       "matches": [
         "*://*.seriesdonghua.com/player.php*",
-        "*://seriesdonghua.com/player.php*",
-        "*://*.mdnemonicplayer.xyz/*",
-        "*://mdnemonicplayer.xyz/*",
-        "*://*.mundodonghua.com/player*",
-        "*://mundodonghua.com/player*"
+        "*://*.mundodonghua.com/player*"
       ],
       "js": ["bridge.js"],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["*://*/*"],
+      "matches": [
+        "*://*.dailymotion.com/*",
+        "*://*.voe.sx/*",
+        "*://*.streamtape.com/*",
+        "*://*.filemoon.sx/*",
+        "*://*.mdnemonicplayer.xyz/*",
+        "*://*.mp4upload.com/*",
+        "*://*.mega.nz/*",
+        "*://*.upnshare.com/*",
+        "*://*.pdrain.com/*"
+      ],
       "js": ["player.js"],
       "run_at": "document_idle",
       "all_frames": true

@@ -583,14 +583,10 @@
         // Si no hay requestFullscreen en el elemento interno, usar PRESS_F
       }
 
-      // Cross-origin (o same-origin sin requestFullscreen): doble estrategia
-      // 1. postMessage al iframe → player.js intenta APIs JWPlayer/VideoJS
+      // Cross-origin (o same-origin sin requestFullscreen):
+      // postMessage al iframe → player.js intenta APIs JWPlayer/VideoJS nativas
       try { target.contentWindow.postMessage({ _aap: true, type: 'SAVE_AND_PRESSF' }, '*'); } catch (_) {}
-      // 2. PRESS_F real vía native host: enfoca el iframe y presiona F física
       try { target.focus(); } catch (_) {}
-      setTimeout(() => {
-        chrome.runtime.sendMessage({ type: 'PRESS_F', action: 'PRESS_F', delay: 150 });
-      }, 200);
 
     } else if (target.tagName === 'VIDEO') {
       const wasMuted = target.muted;
@@ -684,54 +680,9 @@
 
     // Auto-click vía native host: simula un click real en el centro de la ventana
     // para evitar que el usuario tenga que pulsar manualmente.
-    //
-    // Estrategia para cualquier setup (1 o N monitores, distinto DPI):
-    //   1. CLICK_CENTER busca la ventana de Chrome por clase Windows y clickea
-    //      en el centro (58% altura, área de contenido). Usa GetWindowRect →
-    //      coordenadas físicas reales. Inmune a diferencias DPI entre monitores.
-    //   2. Como red de seguridad, 900ms después se envía click por coordenadas
-    //      convertidas a píxeles físicos con devicePixelRatio.
-    //      Solo se dispara si el prompt sigue visible (CLICK_CENTER no funcionó).
-    (() => {
-      const dpr = window.devicePixelRatio || 1;
-
-      // Coordenadas en píxeles FÍSICOS (multiplicamos CSS px por DPR)
-      const centerCssX = window.screenX + window.innerWidth / 2;
-      const centerCssY = window.screenY + (window.outerHeight - window.innerHeight) + window.innerHeight / 2;
-      const fbX = Math.round(centerCssX * dpr);
-      const fbY = Math.round(centerCssY * dpr);
-
-      DBG('Fullscreen prompt: dpr=', dpr, 'cssCenter=', Math.round(centerCssX), Math.round(centerCssY), 'physCenter=', fbX, fbY);
-
-      // Intento 1: CLICK_CENTER — busca la ventana por HWND, inmune a DPI
-      // Enviamos screenX/Y/outerWidth/outerHeight para que el host encuentre
-      // la ventana CORRECTA cuando hay múltiples ventanas en distintos monitores
-      chrome.runtime.sendMessage({
-        type: 'AUTO_CLICK', action: 'CLICK_CENTER', delay: 100,
-        x: fbX, y: fbY,
-        winX: window.screenX, winY: window.screenY,
-        winW: window.outerWidth, winH: window.outerHeight
-      }, (resp) => {
-        if (chrome.runtime.lastError) {
-          DBG('[AAP Host] CLICK_CENTER no disponible:', chrome.runtime.lastError.message);
-        } else if (resp && !resp.ok) {
-          DBG('[AAP Host] CLICK_CENTER falló:', resp.error);
-        }
-      });
-
-      // Intento 2 (red de seguridad, 200ms después): click por coordenadas físicas
-      // CLICK_CENTER (100ms + ejecución) siempre termina primero. Si funcionó,
-      // el prompt ya no existe y no se envía nada.
-      setTimeout(() => {
-        if (!document.getElementById('_aap_fs_prompt')) return;
-        DBG('[AAP Host] Prompt sigue visible, lanzando fallback click en', fbX, fbY);
-        chrome.runtime.sendMessage({ type: 'AUTO_CLICK', x: fbX, y: fbY, delay: 100 }, () => {
-          if (chrome.runtime.lastError) {
-            DBG('[AAP Host] fallback click no disponible:', chrome.runtime.lastError.message);
-          }
-        });
-      }, 200);
-    })();
+    // Sin host nativo (Store version): el usuario pulsa el overlay para activar
+    // fullscreen. Ese click es un gesto trusted que permite requestFullscreen().
+    // Si el host nativo está instalado (desde GitHub), el background.js se encarga.
 
     let done = false;
     const cleanup = () => {

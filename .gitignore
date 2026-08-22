@@ -9,3 +9,21 @@ Thumbs.db
 # Editor
 .vscode/
 *.swp
+
+# Environment variables (API tokens, secrets)
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+anime-autoplay-store.zip
+host-animeav1-autoplay.zip
+
+# Native host — cada usuario genera el suyo con install_host.ps1
+host/com.animeautoplay.host.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
