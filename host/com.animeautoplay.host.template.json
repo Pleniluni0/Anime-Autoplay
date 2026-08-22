@@ -1,0 +1,9 @@
+{
+    "name":  "com.animeautoplay.host",
+    "description":  "Anime AutoPlay Native Host — simula clicks reales para fullscreen",
+    "path":  "REEMPLAZAR_CON_RUTA_ABSOLUTA\\animeautoplay_host.bat",
+    "type":  "stdio",
+    "allowed_origins":  [
+                            "chrome-extension://REEMPLAZAR_CON_TU_ID/"
+                        ]
+}
